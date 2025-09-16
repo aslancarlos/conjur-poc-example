@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dotnet
+  namespace: conjur
+  labels:
+    app: dotnet
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dotnet
+  template:
+    metadata:
+      labels:
+        app: dotnet
+      annotations:
+        conjur.org/container-mode: sidecar
+        conjur.org/secrets-refresh-interval: 10s
+    spec:
+      serviceAccountName: dotnet
+      containers:
+        - name: dotnet
+          image: aslancarlos/dotnet-app:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-dotnet
+                  key: username
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: db-dotnet
+                  key: address
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-dotnet
+                  key: password
+          volumeMounts:
+            - name: conjur-status
+              mountPath: /conjur/status
+
+        - name: cyberark-secrets-provider-for-k8s
+          image: cyberark/secrets-provider-for-k8s:latest
+          imagePullPolicy: Always
+          env:
+            - name: JWT_TOKEN_PATH
+              value: /var/run/secrets/tokens/jwt
+            - name: CONTAINER_MODE
+              value: init
+            - name: MY_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: K8S_SECRETS
+              value: db-dotnet
+            - name: SECRETS_DESTINATION
+              value: k8s_secrets
+          envFrom:
+            - configMapRef:
+                name: conjur-connect
+          volumeMounts:
+            - name: conjur-status
+              mountPath: /conjur/status
+            - name: jwt-token
+              mountPath: /var/run/secrets/tokens
+            - name: conjur-access-token
+              mountPath: /run/conjur
+            - name: conjur-certs
+              mountPath: /etc/conjur/ssl
+            - name: podinfo
+              mountPath: /conjur/podinfo
+
+      volumes:
+        - name: conjur-status
+          emptyDir:
+            medium: Memory
+        - name: jwt-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: conjur
+                  expirationSeconds: 6001
+                  path: jwt
+        - name: conjur-access-token
+          emptyDir:
+            medium: Memory
+        - name: conjur-certs
+          emptyDir:
+            medium: Memory
+        - name: podinfo
+          downwardAPI:
+            items:
+              - path: annotations
+                fieldRef:
+                  fieldPath: metadata.annotations
+
